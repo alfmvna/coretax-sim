@@ -113,6 +113,22 @@ def check_csrf(request: Request, form) -> bool:
         c.close()
 
 
+def check_csrf_get(request: Request) -> bool:
+    """Validasi token CSRF dari query string.
+
+    Dipakai untuk link GET yang mengubah state (hapus lampiran, bayar billing).
+    Token CSRF bersifat per-session dan hanya berguna bagi penyerang yang sudah
+    punya cookie session, jadi menaruhnya di query string tidak menambah risiko.
+    """
+    tok = request.cookies.get(S.SESSION_COOKIE)
+    submitted = request.query_params.get("csrf_token") or ""
+    c = M.conn()
+    try:
+        return S.check_csrf(c, tok, submitted)
+    finally:
+        c.close()
+
+
 def get_wp(request: Request = None) -> dict:
     """Data WP. Kalau request diberikan -> WP milik session itu (multi-user).
     Tanpa request -> fallback ke WP default (dipakai seed & konteks non-request)."""
@@ -958,7 +974,7 @@ def spt_edit(request: Request, spt_id: int):
             for r in rows:
                 d = json.loads(r["data"] or "{}")
                 tds = "".join(f'<td>{esc(d.get(k[0],""))}</td>' for k in lp["kolom"])
-                tb += f"<tr>{tds}<td><a class='btn-mini ghost' href='/spt/{spt_id}/lampiran/{lp['kode']}/{r['id']}/hapus'>Hapus</a></td></tr>"
+                tb += f"<tr>{tds}<td><a class='btn-mini ghost' href='/spt/{spt_id}/lampiran/{lp['kode']}/{r['id']}/hapus?csrf_token={esc(csrf_token(request))}'>Hapus</a></td></tr>"
             if not tb:
                 tb = f'<tr><td colspan="{len(lp["kolom"])+1}" class="empty">Belum ada data.</td></tr>'
             isi_lamp += (f'<section class="card"><h3>{esc(lp["judul"])}</h3>'
@@ -971,13 +987,20 @@ def spt_edit(request: Request, spt_id: int):
                     rows = c.execute("SELECT * FROM lampiran WHERE spt_id=? AND kode=? AND sub=?",
                                      (spt_id, f'{lp["kode"]}|{bg["kode"]}|{sb["kode"]}', sb["kode"])).fetchall()
                     tb = ""
+                    subkey = f'{lp["kode"]}|{bg["kode"]}|{sb["kode"]}'
                     for r in rows:
                         d = json.loads(r["data"] or "{}")
                         tds = "".join(f'<td>{esc(d.get(k[0],""))}</td>' for k in sb["field"])
-                        tb += f"<tr>{tds}</tr>"
+                        # subkey = "KODE|BAGIAN|SUB"; path param FastAPI tidak bisa
+                        # menerima '|' dalam satu segmen -> pecah jadi 3 segmen.
+                        _k, _b, _s = subkey.split("|", 2)
+                        hapus = (f'<a class="btn-mini ghost" href="/spt/{spt_id}/lampiran/'
+                                 f'{esc(_k)}/{esc(_b)}/{esc(_s)}/{r["id"]}/hapus?csrf_token='
+                                 f'{esc(csrf_token(request))}">Hapus</a>')
+                        tb += f"<tr>{tds}<td>{hapus}</td></tr>"
                     if not tb:
-                        tb = f'<tr><td colspan="{len(sb["field"])}" class="empty">Belum ada data.</td></tr>'
-                    th = "".join(f"<th>{esc(k[1])}</th>" for k in sb["field"])
+                        tb = f'<tr><td colspan="{len(sb["field"])+1}" class="empty">Belum ada data.</td></tr>'
+                    th = "".join(f"<th>{esc(k[1])}</th>" for k in sb["field"]) + "<th>Aksi</th>"
                     desc = ""
                     if sb.get("desc"):
                         desc = ('<label>Deskripsi <select name="description">'
@@ -1056,6 +1079,8 @@ def lampiran_tambah(request: Request, spt_id: int, kode: str,
     if not current_npwp(request):
         return RedirectResponse("/")
     s = spt_row(spt_id, request)
+    if not s:
+        return HTMLResponse("<h1>404</h1>", status_code=404)
     bagian, lampiran = M.form_for(s["jenis_pajak"])
     target = None
     for lp in lampiran:
@@ -1155,14 +1180,27 @@ async def _lampiran_simpan(request: Request, spt_id: int, kode: str, sub1: str, 
     return RedirectResponse(f"/spt/{spt_id}/edit", status_code=303)
 
 
+@app.get("/spt/{spt_id}/lampiran/{kode}/{sub1}/{sub2}/{lid}/hapus")
+def lampiran_hapus_sub(request: Request, spt_id: int, kode: str, sub1: str, sub2: str, lid: int):
+    return lampiran_hapus(request, spt_id, kode, lid)
+
+
 @app.get("/spt/{spt_id}/lampiran/{kode}/{lid}/hapus")
 def lampiran_hapus(request: Request, spt_id: int, kode: str, lid: int):
     if not current_npwp(request):
         return RedirectResponse("/")
+    # Kepemilikan dicek lewat SPT induknya; tanpa ini WP bisa hapus lampiran
+    # SPT orang lain hanya dengan menebak id (IDOR).
+    s = spt_row(spt_id, request)
+    if not s:
+        return HTMLResponse("<h1>404</h1>", status_code=404)
+    if not check_csrf_get(request):
+        return HTMLResponse("<h1>403</h1><p>Token CSRF tidak valid.</p>", status_code=403)
     c = M.conn()
     c.execute("DELETE FROM lampiran WHERE id=? AND spt_id=?", (lid, spt_id))
     c.commit()
     c.close()
+    M.log(actor(request), "hapus_lampiran", f"spt_id={spt_id} {kode}")
     return RedirectResponse(f"/spt/{spt_id}/edit", status_code=303)
 
 
@@ -1418,7 +1456,7 @@ def billing(request: Request):
     tb = "".join(f"<tr><td>{esc(r['kode'])}</td><td>{esc(r['nama_pajak'])}</td>"
                  f"<td>{fmt(r['jumlah'])}</td><td>{esc(r['tgl_jatuh_tempo'])}</td>"
                  f"<td>{esc(r['status'])}</td>"
-                 f"{'<td><a class=\"btn-mini\" href=\"/billing/'+str(r['id'])+'/bayar\">Bayar</a></td>' if r['status']=='Belum Dibayar' else '<td>-</td>'}"
+                 f"{'<td><a class=\"btn-mini\" href=\"/billing/'+str(r['id'])+'/bayar?csrf_token='+esc(csrf_token(request))+'\">Bayar</a></td>' if r['status']=='Belum Dibayar' else '<td>-</td>'}"
                  f"</tr>" for r in rows)
     isi = f"""
     <div class="page-head"><div><h1>Pembayaran</h1>
@@ -1443,9 +1481,19 @@ def billing_bayar(request: Request, bid: int):
         return RedirectResponse("/")
     npwp = current_npwp(request)
     c = M.conn()
-    b = c.execute("SELECT * FROM billing WHERE id=?", (bid,)).fetchone()
+    # Filter npwp: WP hanya boleh membayar billing miliknya sendiri (anti-IDOR).
+    # Operator (OP) boleh membayar semua.
+    w = c.execute("SELECT role FROM wp WHERE npwp=?", (npwp,)).fetchone()
+    if w is not None and w["role"] == "OP":
+        b = c.execute("SELECT * FROM billing WHERE id=?", (bid,)).fetchone()
+    else:
+        b = c.execute("SELECT * FROM billing WHERE id=? AND npwp=?", (bid, npwp)).fetchone()
     if not b:
+        c.close()
         return HTMLResponse("<h1>404</h1>", status_code=404)
+    if not check_csrf_get(request):
+        c.close()
+        return HTMLResponse("<h1>403</h1><p>Token CSRF tidak valid.</p>", status_code=403)
     d = c.execute("SELECT saldo FROM deposit WHERE npwp=?", (npwp,)).fetchone()
     if d and d["saldo"] >= b["jumlah"]:
         c.execute("UPDATE deposit SET saldo=saldo-? WHERE npwp=?", (b["jumlah"], npwp))

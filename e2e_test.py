@@ -268,10 +268,11 @@ check("status SPT Menunggu Pembayaran", "SPT Menunggu Pembayaran" in body)
 # berstatus "Lunas", sehingga pengecekan "belum Lunas" di bawah jadi salah.
 code, body = get("/billing")
 check("halaman billing", code == 200 and "Kode Billing" in body)
-m = re.search(r'href="/billing/(\d+)/bayar"', body)
+m = re.search(r'href="/billing/(\d+)/bayar\?csrf_token=([^"]+)"', body)
 bid = m.group(1) if m else None
+csrf_bayar = m.group(2) if m else None
 check("tombol bayar ada", bid is not None)
-code, body = get(f"/billing/{bid}/bayar")
+code, body = get(f"/billing/{bid}/bayar?csrf_token={csrf_bayar}")
 check("billing lunas", code == 200 and "Lunas" in body)
 code, body = get("/spt?status=Semua")
 check("SPT jadi Dilaporkan", "SPT Dilaporkan" in body)

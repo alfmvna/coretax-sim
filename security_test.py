@@ -158,6 +158,56 @@ if spt_id:
     code, _, _ = get(f"/spt/{spt_id}", C_OP)
     check("OP boleh akses SPT (role OP)", code == 200, f"code={code}")
 
+    # ---- IDOR: hapus lampiran milik orang lain ----
+    # WP (TIM A) tidak boleh menghapus lampiran pada SPT milik OP.
+    code, _, body_lamp = get(f"/spt/{spt_id}/edit", C_OP)
+    lids = re.findall(r"/lampiran/[^/]+/(\d+)/hapus", body_lamp)
+    if lids:
+        lid = lids[0]
+        code, _, _ = get(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", C2)
+        check("WP tidak bisa hapus lampiran milik orang lain (IDOR)",
+              code in (403, 404), f"code={code}")
+        # tanpa token CSRF harus ditolak, walau punya session valid
+        code, _, _ = get(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", C_OP)
+        check("hapus lampiran tanpa CSRF -> 403", code == 403, f"code={code}")
+    else:
+        # tidak ada baris lampiran: buat dulu lewat OP
+        code, _, body_lamp = get(f"/spt/{spt_id}/lampiran/L-1", C_OP)
+        m = re.search(r'name="csrf_token" value="([^"]+)"', body_lamp)
+        if m:
+            post(f"/spt/{spt_id}/lampiran/L-1/simpan",
+                 {"keterangan": "test", "csrf_token": m.group(1)}, cookie=C_OP)
+            code, _, body_lamp = get(f"/spt/{spt_id}/edit", C_OP)
+            lids = re.findall(r"/lampiran/[^/]+/(\d+)/hapus", body_lamp)
+        if lids:
+            lid = lids[0]
+            code, _, _ = get(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", C2)
+            check("WP tidak bisa hapus lampiran milik orang lain (IDOR)",
+                  code in (403, 404), f"code={code}")
+        else:
+            check("WP tidak bisa hapus lampiran milik orang lain (IDOR)", True,
+                  "lewati: tidak ada baris lampiran")
+
+# ---- IDOR: bayar billing milik orang lain ----
+code, _, body_bill_op = get("/billing", C_OP)
+m = re.search(r'/billing/(\d+)/bayar\?csrf_token=([^"]+)"', body_bill_op)
+if m:
+    bid = m.group(1)
+    csrf_bill = m.group(2)
+    # WP (TIM A) mencoba membayar billing milik OP
+    code, _, _ = get(f"/billing/{bid}/bayar", C2)
+    check("WP tidak bisa bayar billing milik orang lain (IDOR)",
+          code in (403, 404), f"code={code}")
+    # WP memakai token CSRF milik OP tetap ditolak
+    code, _, _ = get(f"/billing/{bid}/bayar?csrf_token={csrf_bill}", C2)
+    check("WP pakai token CSRF OP tetap ditolak", code in (403, 404), f"code={code}")
+    # tanpa CSRF harus ditolak
+    code, _, _ = get(f"/billing/{bid}/bayar", C_OP)
+    check("bayar billing tanpa CSRF -> 403", code == 403, f"code={code}")
+else:
+    check("WP tidak bisa bayar billing milik orang lain (IDOR)", True,
+          "lewati: tidak ada billing")
+
 # ============================================================= 5. session
 print("\n--- 5. session ---")
 # cookie palsu harus DITOLAK -> redirect ke login (307), bukan 200 halaman aplikasi
