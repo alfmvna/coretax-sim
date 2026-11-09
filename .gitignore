@@ -1,0 +1,24 @@
+# Data aplikasi & kredensial — JANGAN pernah di-commit
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+
+# Screenshot & artefak test
+shot-*.png
+strix_runs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

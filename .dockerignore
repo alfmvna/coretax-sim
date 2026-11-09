@@ -1,0 +1,27 @@
+# Jangan masukkan ke image container
+.git/
+.gitignore
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+*.log
+shot-*.png
+strix_runs/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Test & tooling (tidak dipakai runtime)
+test_tax.py
+e2e_test.py
+nav_test.py
+nav_browser_test.py
+live_test.py
+security_test.py
+tools/
+Dockerfile
+docker-compose.yml

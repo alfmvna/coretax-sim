@@ -1,0 +1,57 @@
+services:
+  app:
+    build: .
+    image: coretax-sim:latest
+    container_name: coretax-sim
+    restart: unless-stopped
+
+    # Bind ke 0.0.0.0 supaya bisa diakses dari LAN.
+    # Kalau server ada di internet publik, letakkan reverse proxy (Caddy/nginx)
+    # di depannya untuk TLS + rate limit tambahan — lihat docs/DEPLOY.md
+    ports:
+      - "${CORETAX_BIND:-0.0.0.0}:${CORETAX_PORT:-8140}:8140"
+
+    volumes:
+      # Database SQLite + data pengguna. Backup = copy 1 file dari volume ini.
+      - coretax-data:/app/data
+
+    environment:
+      # demo  : password tetap wajib cocok, tapi data demo ikut dibuat (untuk kelas)
+      # strict: tanpa data demo, hanya user dari DEFAULT_WP
+      CORETAX_MODE: "${CORETAX_MODE:-demo}"
+      CORETAX_SEED_DEMO: "${CORETAX_SEED_DEMO:-0}"
+      CORETAX_DATA_DIR: /app/data
+
+      # Keamanan
+      CORETAX_PBKDF2_ITER: "${CORETAX_PBKDF2_ITER:-200000}"
+      CORETAX_SESSION_TTL: "${CORETAX_SESSION_TTL:-43200}"
+      CORETAX_MAX_ATTEMPT: "${CORETAX_MAX_ATTEMPT:-5}"
+      CORETAX_LOCKOUT_SEC: "${CORETAX_LOCKOUT_SEC:-900}"
+      CORETAX_IP_ATTEMPT_MAX: "${CORETAX_IP_ATTEMPT_MAX:-20}"
+      CORETAX_IP_WINDOW: "${CORETAX_IP_WINDOW:-300}"
+      CORETAX_CSRF_TTL: "${CORETAX_CSRF_TTL:-28800}"
+      # Set 1 kalau diakses via HTTPS (reverse proxy) — cookie jadi Secure
+      CORETAX_COOKIE_SECURE: "${CORETAX_COOKIE_SECURE:-0}"
+      # Set 1 kalau ada reverse proxy yang	set X-Forwarded-For
+      CORETAX_TRUST_PROXY: "${CORETAX_TRUST_PROXY:-0}"
+
+    # Batas resource — mencegah container runaway menguras server
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+    # Jangan simpan credential lewat docker inspect
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  coretax-data:
+    name: coretax-sim-data
