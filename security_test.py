@@ -164,11 +164,11 @@ if spt_id:
     lids = re.findall(r"/lampiran/[^/]+/(\d+)/hapus", body_lamp)
     if lids:
         lid = lids[0]
-        code, _, _ = get(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", C2)
+        code, _, _, _ = post(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", {}, cookie=C2)
         check("WP tidak bisa hapus lampiran milik orang lain (IDOR)",
               code in (403, 404), f"code={code}")
         # tanpa token CSRF harus ditolak, walau punya session valid
-        code, _, _ = get(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", C_OP)
+        code, _, _, _ = post(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", {}, cookie=C_OP)
         check("hapus lampiran tanpa CSRF -> 403", code == 403, f"code={code}")
     else:
         # tidak ada baris lampiran: buat dulu lewat OP
@@ -181,7 +181,7 @@ if spt_id:
             lids = re.findall(r"/lampiran/[^/]+/(\d+)/hapus", body_lamp)
         if lids:
             lid = lids[0]
-            code, _, _ = get(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", C2)
+            code, _, _, _ = post(f"/spt/{spt_id}/lampiran/L-1/{lid}/hapus", {}, cookie=C2)
             check("WP tidak bisa hapus lampiran milik orang lain (IDOR)",
                   code in (403, 404), f"code={code}")
         else:

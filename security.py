@@ -188,8 +188,9 @@ def register_failed(db: sqlite3.Connection, npwp: str, ip: str) -> int:
     return gagal
 
 
-def register_success(db: sqlite3.Connection, npwp: str) -> None:
-    db.execute("DELETE FROM percobaan_login WHERE npwp=?", (npwp,))
+def register_success(db: sqlite3.Connection, npwp: str, ip: str = "") -> None:
+    # reset juga counter per-IP supaya login sah mengisi ulang jatah
+    db.execute("DELETE FROM percobaan_login WHERE npwp=? OR ip=?", (npwp, ip))
     db.commit()
 
 

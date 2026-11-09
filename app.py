@@ -19,7 +19,7 @@ import security as S
 import tax as T
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-app = FastAPI()
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT, "static")), name="static")
 
 M.init_db()
@@ -273,7 +273,10 @@ async def do_login(request: Request, id: str = Form(...), pwd: str = Form(...)):
         if blocked:
             M.log(npwp, "login_blocked", f"ip={ip}", db=c)
             c.commit()
-            return login_page(pesan)
+            r429 = login_page(pesan)
+            r429.status_code = 429
+            r429.headers["Retry-After"] = "300"
+            return r429
 
         row = c.execute("SELECT * FROM wp WHERE npwp=?", (npwp,)).fetchone()
         # Pesan error seragam: jangan bocorkan apakah NPWP terdaftar.
@@ -282,7 +285,7 @@ async def do_login(request: Request, id: str = Form(...), pwd: str = Form(...)):
             # Hash dummy: response time seragam dengan password salah ->
             # tidak bisa dipakai untuk memetakan NIK yang terdaftar.
             S.verify_dummy(pwd)
-            S.register_failed(c, npwp, ip)
+            # tidak dihitung: NPWP asal tidak boleh menghabiskan jatah per-IP
             M.log(npwp, "login_gagal", "npwp_tidak_ada", db=c)
             c.commit()
             return login_page(pesan_gagal)
@@ -294,7 +297,7 @@ async def do_login(request: Request, id: str = Form(...), pwd: str = Form(...)):
             c.commit()
             return login_page(pesan_gagal)
 
-        S.register_success(c, npwp)
+        S.register_success(c, npwp, ip)
         tok = S.new_session(c, npwp, ip)
         M.log(npwp, "login", f"role={row['role']}", db=c)
         c.commit()
@@ -994,7 +997,7 @@ def spt_edit(request: Request, spt_id: int):
             for r in rows:
                 d = json.loads(r["data"] or "{}")
                 tds = "".join(f'<td>{esc(d.get(k[0],""))}</td>' for k in lp["kolom"])
-                tb += f"<tr>{tds}<td><a class='btn-mini ghost' href='/spt/{spt_id}/lampiran/{lp['kode']}/{r['id']}/hapus?csrf_token={esc(csrf_token(request))}'>Hapus</a></td></tr>"
+                tb += f"<tr>{tds}<td><form method='post' action='/spt/{spt_id}/lampiran/{lp['kode']}/{r['id']}/hapus'>{csrf_field(request)}<button class='btn-mini ghost'>Hapus</button></form></td></tr>"
             if not tb:
                 tb = f'<tr><td colspan="{len(lp["kolom"])+1}" class="empty">Belum ada data.</td></tr>'
             isi_lamp += (f'<section class="card"><h3>{esc(lp["judul"])}</h3>'
@@ -1014,9 +1017,9 @@ def spt_edit(request: Request, spt_id: int):
                         # subkey = "KODE|BAGIAN|SUB"; path param FastAPI tidak bisa
                         # menerima '|' dalam satu segmen -> pecah jadi 3 segmen.
                         _k, _b, _s = subkey.split("|", 2)
-                        hapus = (f'<a class="btn-mini ghost" href="/spt/{spt_id}/lampiran/'
-                                 f'{esc(_k)}/{esc(_b)}/{esc(_s)}/{r["id"]}/hapus?csrf_token='
-                                 f'{esc(csrf_token(request))}">Hapus</a>')
+                        hapus = (f'<form method="post" action="/spt/{spt_id}/lampiran/'
+                                 f'{esc(_k)}/{esc(_b)}/{esc(_s)}/{r["id"]}/hapus">'
+                                 f'{csrf_field(request)}<button class="btn-mini ghost">Hapus</button></form>')
                         tb += f"<tr>{tds}<td>{hapus}</td></tr>"
                     if not tb:
                         tb = f'<tr><td colspan="{len(sb["field"])+1}" class="empty">Belum ada data.</td></tr>'
@@ -1061,8 +1064,6 @@ async def spt_simpan(request: Request, spt_id: int):
     s = spt_row(spt_id, request)
     if not s:
         return HTMLResponse("<h1>404</h1>", status_code=404)
-    form = await request.form()
-
     form = await request.form()
     if not check_csrf(request, form):
         return HTMLResponse("<h1>403</h1><p>Token CSRF tidak valid atau kedaluwarsa. "
@@ -1200,13 +1201,13 @@ async def _lampiran_simpan(request: Request, spt_id: int, kode: str, sub1: str, 
     return RedirectResponse(f"/spt/{spt_id}/edit", status_code=303)
 
 
-@app.get("/spt/{spt_id}/lampiran/{kode}/{sub1}/{sub2}/{lid}/hapus")
-def lampiran_hapus_sub(request: Request, spt_id: int, kode: str, sub1: str, sub2: str, lid: int):
-    return lampiran_hapus(request, spt_id, kode, lid)
+@app.post("/spt/{spt_id}/lampiran/{kode}/{sub1}/{sub2}/{lid}/hapus")
+async def lampiran_hapus_sub(request: Request, spt_id: int, kode: str, sub1: str, sub2: str, lid: int):
+    return await lampiran_hapus(request, spt_id, kode, lid)
 
 
-@app.get("/spt/{spt_id}/lampiran/{kode}/{lid}/hapus")
-def lampiran_hapus(request: Request, spt_id: int, kode: str, lid: int):
+@app.post("/spt/{spt_id}/lampiran/{kode}/{lid}/hapus")
+async def lampiran_hapus(request: Request, spt_id: int, kode: str, lid: int):
     if not current_npwp(request):
         return RedirectResponse("/")
     # Kepemilikan dicek lewat SPT induknya; tanpa ini WP bisa hapus lampiran
@@ -1214,7 +1215,7 @@ def lampiran_hapus(request: Request, spt_id: int, kode: str, lid: int):
     s = spt_row(spt_id, request)
     if not s:
         return HTMLResponse("<h1>404</h1>", status_code=404)
-    if not check_csrf_get(request):
+    if not check_csrf(request, await request.form()):
         return HTMLResponse("<h1>403</h1><p>Token CSRF tidak valid.</p>", status_code=403)
     c = M.conn()
     c.execute("DELETE FROM lampiran WHERE id=? AND spt_id=?", (lid, spt_id))
@@ -1299,6 +1300,8 @@ async def spt_tt_simpan(request: Request, spt_id: int):
         return HTMLResponse("<h1>403</h1><p>Token CSRF tidak valid atau kedaluwarsa. "
                             "Muat ulang halaman lalu coba lagi.</p>", status_code=403)
     s = spt_row(spt_id, request)
+    if not s:
+        return HTMLResponse("<h1>404</h1>", status_code=404)
     data = json.loads(s["data"] or "{}")
     bagian, _ = M.form_for(s["jenis_pajak"])
     allowed = {f[0] for b in bagian for f in b["field"]}
