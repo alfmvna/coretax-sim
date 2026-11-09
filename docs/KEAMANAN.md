@@ -20,7 +20,9 @@ apa yang **belum** diamankan.
 | User enumeration | ✅ | Pesan error seragam |
 | Session | ✅ | Persisten di SQLite, HttpOnly, SameSite, TTL |
 | CSRF | ✅ | Token per-session, dicek di semua POST |
-| IDOR | ✅ | `spt_row()` filter kepemilikan, role-based access |
+| IDOR (detail) | ✅ | `spt_row()` filter kepemilikan, role-based access |
+| IDOR (list view) | ✅ | `owner_scope()` filter owner pada 6 query list |
+| CSRF pada GET mutating | ✅ | Token CSRF di query string, wajib valid |
 | Security headers | ✅ | CSP ketat + 6 header lain |
 | SQL injection | ✅ | Semua query ter-parameterisasi |
 | XSS | ✅ | `html.escape` di semua output |
@@ -195,6 +197,93 @@ Semua 8 call site `spt_row()` sudah dipasses `request`.
 
 ---
 
+## 5b. Temuan Audit Strix
+
+Scan Strix (AI multi-agent pentest, mode quick, run `host-docker-internal-8156_cc73`)
+menguji aplikasi secara black-box terhadap instance container.
+
+### Hasil
+
+| Kategori | Jumlah |
+|---|---|
+| Ruled out (terbukti aman) | 30+ jalur |
+| Vulnerability terkonfirmasi | 1 (`vuln-0001`, CWE-639, Medium) |
+| Requires further review | 2 (keduanya dicek manual → aman) |
+
+### `vuln-0001` — List view bocor metadata WP lain (CWE-639, Medium)
+
+**Ditemukan:** list view `/spt`, `/faktur`, `/bupot`, `/billing`, `/buku-besar`,
+dan `/home` mengembalikan **seluruh baris** ke session WP mana pun tanpa filter
+owner.
+
+**Dampak:** WP bisa membaca metadata SPT orang lain (jenis pajak, masa pajak,
+tahun, status, nilai kurang bayar, ID), nama counterpart faktur pajak, nama
+penerima bukti potong, dan agregat keuangan global. Detail route sudah
+owner-filtered (404), sehingga yang bocor adalah metadata + primary key —
+bukan isi formulir.
+
+**Bukti bypass (dari Strix):** record yang dibuat WP langsung muncul di
+daftar OP, dan sebaliknya. Keduanya hanya mungkin jika query tidak punya
+predikat owner.
+
+**Perbaikan:** helper `owner_scope(request, kolom)` mengembalikan fragment SQL
++ argumen; WP dibatasi ke barisnya sendiri, role `OP` tetap melihat semuanya.
+Diterapkan pada 6 query.
+
+```python
+def owner_scope(request: Request, kolom: str = "npwp") -> tuple[str, list]:
+    npwp = current_npwp(request)
+    row = current_wp(request)
+    if row and row["role"] == "OP":
+        return "", []          # operator: semua data
+    return f" AND {kolom}=?", [npwp]
+```
+
+Kolom owner berbeda per tabel: `spt.npwp`, `e_faktur.npwp_penjual`,
+`bupot.npwp_pemotong`, `billing.npwp`.
+
+### 2 temuan "requires further review" — dicek manual, aman
+
+1. **Mass assignment di `POST /wp/simpan`** — Strix curiga WP bisa mengeset
+   `role=OP` atau `npwp` orang lain. **Aman:** query `UPDATE` memakai
+   `WHERE npwp=?` dengan nilai dari `get_wp(request)["npwp"]` (session), bukan
+   dari form. Field `role`, `npwp`, `aktif` tidak pernah ditulis oleh handler ini.
+
+2. **Error handling di route lampiran** — Strix melihat HTTP 500 saat WP
+   membuka lampiran SPT milik orang lain. **Bug pre-existing, sudah diperbaiki:**
+   `lampiran_tambah()` tidak mengecek `spt_row()` sehingga `None` di-subscript.
+   Sekarang mengembalikan 404.
+
+### Jalur yang Strix ruled-out (terbukti aman)
+
+Autentikasi (SQLi, type confusion, mass assignment, enumerasi, identifier
+normalisation), session (fixation, token forgery, cross-user reuse, logout
+invalidation, alternate channels), CSRF POST (semua endpoint diuji dengan token
+kosong, sampah, dan token milik session lain), IDOR write path, CORS,
+SQL injection, DOM XSS di `static/live.js`, dan rate-limit bypass via header
+proxy.
+
+---
+
+## 5c. IDOR lain yang ditemukan audit manual
+
+| Route | Masalah | Perbaikan |
+|---|---|---|
+| `GET /billing/{id}/bayar` | Query billing tanpa filter `npwp` → WP bisa membayar billing orang lain | Filter `npwp` (role OP tetap semua) |
+| `GET /spt/{id}/lampiran/{kode}/{lid}/hapus` | Hapus baris lampiran tanpa cek kepemilikan SPT | Cek lewat `spt_row()` → 404 |
+| Kedua route di atas | Mengubah state lewat GET tanpa CSRF | Token CSRF per-session di query string, wajib valid |
+
+### Catatan: CSRF pada link GET
+
+Link "Hapus" dan "Bayar" memakai `GET` agar bisa diklik tanpa JavaScript.
+Keduanya kini menyertakan `?csrf_token=...` yang nilainya per-session.
+
+Token CSRF per-session aman ditaruh di query string: nilainya hanya berguna
+bagi penyerang yang **sudah** memegang cookie session, dan `Referrer-Policy:
+strict-origin-when-cross-origin` mencegah kebocoran ke origin lain.
+
+---
+
 ## 6. Security headers
 
 Middleware global (`app.py`) — dipasang ke semua respons, termasuk halaman error.
@@ -332,3 +421,6 @@ dimiliki user tersebut.
    dilaporkan ke mana pun. Tambahkan kalau perlu monitoring.
 6. **Belum ada pagination** pada daftar SPT/faktur/bupot. Untuk skala kelas
    cukup; kalau data tumbuh besar, tambahkan LIMIT/OFFSET.
+7. **Re-scan Strix setelah perbaikan `vuln-0001` belum dijalankan.**
+   Perbaikannya terverifikasi lewat `tools/verify_list_scope.py` (14 cek),
+   tapi belum dikonfirmasi ulang oleh scanner.

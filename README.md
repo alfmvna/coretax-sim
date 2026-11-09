@@ -133,7 +133,8 @@ Sudah diperkeras dan diuji — rincian di [`docs/KEAMANAN.md`](docs/KEAMANAN.md)
 | User enumeration | Pesan seragam + response time disamakan |
 | Session | SQLite, token 256-bit, HttpOnly, SameSite, TTL 12 jam |
 | CSRF | Token per-session, dicek di semua POST |
-| IDOR | Filter kepemilikan; role OP vs WP |
+| IDOR (detail) | Filter kepemilikan; role OP vs WP |
+| IDOR (list view) | `owner_scope()` filter owner pada 6 query list |
 | Headers | CSP `script-src 'self'` + 6 header lain |
 | SQLi / XSS | Query ter-parameterisasi; output di-escape |
 | Container | Non-root uid 10001, `no-new-privileges`, limit resource |
@@ -150,6 +151,8 @@ python3 test_tax.py         # 50 kasus engine perhitungan
 python3 e2e_test.py         # alur HTTP end-to-end (butuh server jalan)
 python3 nav_test.py         # navigasi antar modul
 python3 security_test.py    # keamanan: brute force, CSRF, IDOR, session
+python3 tools/verify_idor.py      # IDOR + CSRF pada write path
+python3 tools/verify_list_scope.py # isolasi list view WP vs OP
 ```
 
 ---
@@ -183,5 +186,6 @@ data/         SQLite (volume Docker, di-backup)
   dua file harus diupdate.
 - **Akun demo memakai NIK `2171121009959003`** milik asli. Ganti di
   `models.py` → `DEMO_USERS` sebelum dipakai di luar kelas.
-- **Audit Strix belum dijalankan** — hardening berbasis review kode manual +
-  test, belum diverifikasi pentest AI.
+- **Audit Strix sudah dijalankan** (mode quick, black-box). 1 temuan Medium
+  (list view bocor metadata WP lain) sudah ditutup. Re-scan untuk verifikasi
+  belum dijalankan.

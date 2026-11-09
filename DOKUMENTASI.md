@@ -247,7 +247,7 @@ Detail lengkap di [`docs/KEAMANAN.md`](docs/KEAMANAN.md).
 
 ### Audit awal — 6 temuan kritis
 
-Audit kode menemukan:
+Audit kode manual menemukan:
 
 | # | Temuan | Dampak | Status |
 |---|---|---|---|
@@ -285,6 +285,43 @@ arsitektur lain, build bisa gagal. PBKDF2 pure stdlib → image selalu portable.
 inline style. Data dinamis (mis. PTKP WP) dikirim lewat atribut
 `data-ptkp` pada `<body>`, bukan inline `<script>`.
 
+### Audit Strix (AI multi-agent pentest)
+
+Scan black-box terhadap instance container, mode quick, budget $0.60.
+Run: `host-docker-internal-8156_cc73`.
+
+| Kategori | Jumlah |
+|---|---|
+| Ruled out (terbukti aman) | 30+ jalur |
+| Vulnerability terkonfirmasi | **1** (`vuln-0001`, CWE-639, Medium) |
+| Requires further review | 2 (dicek manual → aman) |
+
+**Temuan utama — `vuln-0001`: list view bocor metadata WP lain.**
+
+`/spt`, `/faktur`, `/bupot`, `/billing`, `/buku-besar`, `/home` mengembalikan
+seluruh baris ke session WP mana pun tanpa filter owner. Detail route sudah
+owner-filtered, jadi yang bocor adalah metadata (jenis pajak, masa, status,
+nilai kurang bayar, ID) + nama counterpart faktur/bupot + agregat keuangan
+global — bukan isi formulir.
+
+Strix membuktikan dua arah: record yang dibuat WP langsung muncul di daftar OP,
+dan sebaliknya. Keduanya hanya mungkin tanpa predikat owner.
+
+Perbaikan: helper `owner_scope(request, kolom)` → WP dibatasi ke barisnya
+sendiri, role `OP` tetap melihat semua. Diterapkan pada 6 query.
+
+**Temuan lain yang sudah ditutup (audit manual, sebelum Strix selesai):**
+
+| Route | Masalah | Perbaikan |
+|---|---|---|
+| `GET /billing/{id}/bayar` | Tanpa filter `npwp` → WP bisa bayar billing orang lain | Filter `npwp` |
+| `GET /spt/{id}/lampiran/{kode}/{lid}/hapus` | Tanpa cek kepemilikan SPT | Cek via `spt_row()` → 404 |
+| Kedua route di atas | State change via GET tanpa CSRF | Token CSRF di query string |
+| `lampiran_tambah()` | Tidak cek `spt_row()` → HTTP 500 (bukan 404) | Return 404 |
+| Lampiran SPT OP | Tidak punya tombol Hapus sama sekali | Kolom Aksi + link Hapus |
+
+Rincian lengkap di [`docs/KEAMANAN.md`](docs/KEAMANAN.md) §5b.
+
 ### Multi-user & role
 
 | Role | Akses |
@@ -306,7 +343,9 @@ Empat suite, semua dijalankan terhadap server yang benar-benar berjalan.
 | `test_tax.py` | 50 kasus engine pajak (Tarif, PTKP, TER, PPN, final, angsuran, parser angka) | **SEMUA PASS** |
 | `e2e_test.py` | 43 pemeriksaan alur HTTP (login → wizard → form → lampiran → draft → TT → billing → bayar → submit), + 17 cek navigasi | **SEMUA E2E PASS** |
 | `nav_test.py` | Navigasi antar modul, kompatibilitas URL lama `?modul=` | **SEMUA NAV PASS** |
-| `security_test.py` | 21 pemeriksaan keamanan (brute force, CSRF, IDOR, session, enumeration) | **SEMUA SECURITY TEST PASS** |
+| `security_test.py` | 26 pemeriksaan keamanan (brute force, CSRF, IDOR, session, enumeration) | **SEMUA SECURITY TEST PASS** |
+| `tools/verify_idor.py` | 15 skenario IDOR + CSRF pada write path (billing, lampiran) | **SEMUA PASS** |
+| `tools/verify_list_scope.py` | 14 pemeriksaan isolasi list view WP vs OP | **SEMUA PASS** |
 
 ### Yang terbukti berjalan
 
@@ -433,9 +472,9 @@ Pakai `sqlite3.backup()`, bukan `cp` — aman walau ada yang sedang menulis.
 
 **Yang belum selesai**
 
-1. **Audit Strix belum dijalankan.** Hardening sudah dilakukan berdasarkan
-   review kode manual + test, tapi belum diverifikasi pentest AI. Scan
-   quick + white-box + fix + re-scan masih tertunda.
+1. **Re-scan Strix setelah perbaikan `vuln-0001` belum dijalankan.** Scan
+   pertama sudah selesai dan temuannya sudah ditutup (terverifikasi 14 cek
+   `verify_list_scope.py`), tapi belum dikonfirmasi ulang oleh scanner.
 2. **PPN belum menarik otomatis dari faktur.** Manual DJP menyebut data faktur
    auto-posting ke SPT PPN; di sini DPP diisi manual.
 3. **e-Faktur / eBUPOT / Pembayaran** masih daftar + tombol — belum alur
@@ -474,3 +513,5 @@ Pakai `sqlite3.backup()`, bukan `cp` — aman walau ada yang sedang menulis.
 | 2026-11-09 | Packaging Docker (non-root), compose, entrypoint, `.env.example` |
 | 2026-11-09 | Dokumentasi: ARSITEKTUR, DEPLOY, KEAMANAN, API, dokumen ini |
 | 2026-11-09 | Build + run container terverifikasi (uid 10001, headers, lockout) |
+| 2026-11-09 | Audit Strix: 1 temuan Medium (list view bocor metadata, CWE-639) → ditutup |
+| 2026-11-09 | Audit manual: 5 IDOR/CSRF tambahan ditutup (billing, hapus lampiran, CSRF GET) |
