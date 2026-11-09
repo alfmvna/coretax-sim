@@ -142,6 +142,20 @@ def get_wp(request: Request = None) -> dict:
     return dict(r) if r else M.DEFAULT_WP
 
 
+def owner_scope(request: Request, kolom: str = "npwp") -> tuple[str, list]:
+    """Fragment SQL + argumen untuk membatasi query ke data milik user aktif.
+
+    WP hanya melihat barisnya sendiri. Operator (OP) melihat semuanya.
+    Kolom owner berbeda per tabel: spt.npwp, e_faktur.npwp_penjual,
+    bupot.npwp_pemotong, billing.npwp.
+    """
+    npwp = current_npwp(request)
+    row = current_wp(request)
+    if row and row["role"] == "OP":
+        return "", []
+    return f" AND {kolom}=?", [npwp]
+
+
 def fmt(v):
     """Format angka gaya Indonesia: 1.234.567,00"""
     if v is None or v == "":
@@ -441,9 +455,12 @@ def home(request: Request, modul: str = Query("Portal Saya")):
         return RedirectResponse("/akses")
     wp = get_wp(request)
     c = M.conn()
-    n_spt = c.execute("SELECT COUNT(*) n FROM spt").fetchone()["n"]
-    n_faktur = c.execute("SELECT COUNT(*) n FROM e_faktur").fetchone()["n"]
-    n_bupot = c.execute("SELECT COUNT(*) n FROM bupot").fetchone()["n"]
+    sc_s, a_s = owner_scope(request, "npwp")
+    sc_f, a_f = owner_scope(request, "npwp_penjual")
+    sc_b, a_b = owner_scope(request, "npwp_pemotong")
+    n_spt = c.execute(f"SELECT COUNT(*) n FROM spt WHERE 1=1{sc_s}", a_s).fetchone()["n"]
+    n_faktur = c.execute(f"SELECT COUNT(*) n FROM e_faktur WHERE 1=1{sc_f}", a_f).fetchone()["n"]
+    n_bupot = c.execute(f"SELECT COUNT(*) n FROM bupot WHERE 1=1{sc_b}", a_b).fetchone()["n"]
     saldo = c.execute("SELECT saldo FROM deposit WHERE npwp=?", (wp["npwp"],)).fetchone()["saldo"]
     c.close()
     konten = f"""
@@ -501,6 +518,9 @@ def spt_dashboard(request: Request, status: str = Query("Konsep SPT"),
         sql += " AND jenis_pajak=?"
         args.append(jenis)
     sql += " ORDER BY id DESC"
+    scope, sargs = owner_scope(request, "npwp")
+    sql = sql.replace(" ORDER BY id DESC", scope + " ORDER BY id DESC")
+    args += sargs
     rows = c.execute(sql, args).fetchall()
     c.close()
 
@@ -1349,7 +1369,8 @@ def faktur(request: Request):
     if r:
         return r
     c = M.conn()
-    rows = c.execute("SELECT * FROM e_faktur ORDER BY id DESC").fetchall()
+    scope, sargs = owner_scope(request, "npwp_penjual")
+    rows = c.execute(f"SELECT * FROM e_faktur WHERE 1=1{scope} ORDER BY id DESC", sargs).fetchall()
     c.close()
     tb = "".join(f"<tr><td>{esc(r['id'])}</td><td>{esc(r['masa_pajak'])}</td>"
                  f"<td>{esc(r['nama_pembeli'])}</td><td>{esc(r['nilai'])}</td>"
@@ -1424,7 +1445,8 @@ def bupot(request: Request):
     if r:
         return r
     c = M.conn()
-    rows = c.execute("SELECT * FROM bupot ORDER BY id DESC").fetchall()
+    scope, sargs = owner_scope(request, "npwp_pemotong")
+    rows = c.execute(f"SELECT * FROM bupot WHERE 1=1{scope} ORDER BY id DESC", sargs).fetchall()
     c.close()
     tb = "".join(f"<tr><td>{esc(r['jenis'])}</td><td>{esc(r['nama_penerima'])}</td>"
                  f"<td>{esc(r['masa_pajak'])}</td><td>{esc(r['bruto'])}</td>"
@@ -1450,7 +1472,8 @@ def billing(request: Request):
         return r
     npwp = current_npwp(request)
     c = M.conn()
-    rows = c.execute("SELECT * FROM billing ORDER BY id DESC").fetchall()
+    scope, sargs = owner_scope(request, "npwp")
+    rows = c.execute(f"SELECT * FROM billing WHERE 1=1{scope} ORDER BY id DESC", sargs).fetchall()
     saldo = c.execute("SELECT saldo FROM deposit WHERE npwp=?", (npwp,)).fetchone()["saldo"]
     c.close()
     tb = "".join(f"<tr><td>{esc(r['kode'])}</td><td>{esc(r['nama_pajak'])}</td>"
@@ -1516,9 +1539,12 @@ def buku_besar(request: Request):
     if r:
         return r
     c = M.conn()
-    faktur = c.execute("SELECT COUNT(*) n, COALESCE(SUM(nilai),0) v, COALESCE(SUM(ppn),0) p FROM e_faktur").fetchone()
-    bupot = c.execute("SELECT COUNT(*) n, COALESCE(SUM(bruto),0) v, COALESCE(SUM(pajak),0) p FROM bupot").fetchone()
-    spt = c.execute("SELECT COUNT(*) n FROM spt").fetchone()
+    sc_f, a_f = owner_scope(request, "npwp_penjual")
+    sc_b, a_b = owner_scope(request, "npwp_pemotong")
+    sc_s, a_s = owner_scope(request, "npwp")
+    faktur = c.execute(f"SELECT COUNT(*) n, COALESCE(SUM(nilai),0) v, COALESCE(SUM(ppn),0) p FROM e_faktur WHERE 1=1{sc_f}", a_f).fetchone()
+    bupot = c.execute(f"SELECT COUNT(*) n, COALESCE(SUM(bruto),0) v, COALESCE(SUM(pajak),0) p FROM bupot WHERE 1=1{sc_b}", a_b).fetchone()
+    spt = c.execute(f"SELECT COUNT(*) n FROM spt WHERE 1=1{sc_s}", a_s).fetchone()
     c.close()
     isi = f"""
     <div class="page-head"><div><h1>Buku Besar Saya</h1>
