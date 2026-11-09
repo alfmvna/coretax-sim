@@ -11,6 +11,12 @@ dipublikasikan DJP.
 
 📖 **[Dokumentasi lengkap → `DOKUMENTASI.md`](DOKUMENTASI.md)**
 
+Dokumentasi lain:
+- [`docs/ARSITEKTUR.md`](docs/ARSITEKTUR.md) — struktur, layer, model data
+- [`docs/DEPLOY.md`](docs/DEPLOY.md) — deploy Docker, TLS, backup, troubleshooting
+- [`docs/KEAMANAN.md`](docs/KEAMANAN.md) — threat model, kontrol, known gaps
+- [`docs/API.md`](docs/API.md) — referensi endpoint
+
 ---
 
 ## Menjalankan
