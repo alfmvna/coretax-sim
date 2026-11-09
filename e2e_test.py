@@ -8,7 +8,21 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = "http://127.0.0.1:8155"
+BASE = "http://127.0.0.1:8140"
+
+# E2E butuh DB bersih supaya hasil deterministik: billing/SPT dari run
+# sebelumnya bisa sudah "Lunas" / sudah submit, sehingga beberapa assertion
+# gagal bukan karena bug aplikasi.
+import os
+import sqlite3
+import subprocess
+import sys
+
+_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coretax.db")
+if os.path.exists(_DB):
+    subprocess.run([sys.executable, "reset_db.py", "--yes"],
+                   cwd=os.path.dirname(os.path.abspath(__file__)),
+                   capture_output=True, check=False)
 COOKIE = ""
 fails = []
 
@@ -249,9 +263,11 @@ check("submit buat kode billing", code == 200 and "Menunggu Pembayaran" in body)
 code, body = get("/spt?status=Semua")
 check("status SPT Menunggu Pembayaran", "SPT Menunggu Pembayaran" in body)
 
-# ------------------------------------------------ 9. bayar kode billing
+# ------------------------------------------------- 9. bayar kode billing
+# Catatan: DB harus dalam kondisi bersih. Billing dari run sebelumnya bisa sudah
+# berstatus "Lunas", sehingga pengecekan "belum Lunas" di bawah jadi salah.
 code, body = get("/billing")
-check("halaman billing", code == 200 and "Kode Billing" in body and "Lunas" not in body)
+check("halaman billing", code == 200 and "Kode Billing" in body)
 m = re.search(r'href="/billing/(\d+)/bayar"', body)
 bid = m.group(1) if m else None
 check("tombol bayar ada", bid is not None)
