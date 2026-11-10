@@ -1394,14 +1394,18 @@ async def faktur_tambah(request: Request):
     if not current_npwp(request):
         return RedirectResponse("/")
     form = await request.form()
-
-    form = await request.form()
     if not check_csrf(request, form):
         return HTMLResponse("<h1>403</h1><p>Token CSRF tidak valid atau kedaluwarsa. "
                             "Muat ulang halaman lalu coba lagi.</p>", status_code=403)
+    # Tolak nominal kosong/non-numerik/nol/negatif/ekstrem; T.num diam-diam jadi 0.
+    # Batas 1 triliun = shortcut: ganti bila ada transaksi sah yang lebih besar.
+    nilai, jumlah, harga = (T.num(form.get(k), None) for k in ("nilai", "jumlah", "harga_satuan"))
+    raw = str(form.get("nilai") or "").strip().lower()
+    if (nilai is None or not (0 < nilai <= 1e12) or "e" in raw or "inf" in raw or "nan" in raw
+            or any(v is not None and not (0 <= v <= 1e12) for v in (jumlah, harga))):
+        return HTMLResponse("<h1>400</h1><p>Nominal tidak valid.</p>", status_code=400)
     c = M.conn()
     nama = str(form.get("nama_pembeli") or "")
-    nilai = T.num(form.get("nilai"))
     masa = str(form.get("masa_pajak") or "")
     dpp = nilai / 1.11
     ppn = nilai - dpp
@@ -1412,7 +1416,7 @@ async def faktur_tambah(request: Request):
               (get_wp(request)["npwp"], str(form.get("npwp_pembeli") or ""), nama, masa,
                masa.split()[-1] if masa else "", M.now()[:10], "Barang/Jasa",
                str(form.get("kode_barang") or ""), str(form.get("nama_barang") or ""),
-               T.num(form.get("jumlah")), T.num(form.get("harga_satuan")), dpp, ppn, 0, "Terbit"))
+               jumlah or 0.0, harga or 0.0, dpp, ppn, 0, "Terbit"))
     c.commit()
     c.close()
     M.log(actor(request), "buat_faktur", nama)
@@ -1423,7 +1427,7 @@ async def faktur_tambah(request: Request):
 def faktur_tambah_form(request: Request):
     if not current_npwp(request):
         return RedirectResponse("/")
-    isi = """<div class="page-head"><div><h1>Buat Faktur Pajak</h1></div></div>
+    isi = f"""<div class="page-head"><div><h1>Buat Faktur Pajak</h1></div></div>
     <form method="post" action="/faktur/tambah" class="card stack">
         {csrf_field(request)}
       <label>Masa Pajak <input type="text" name="masa_pajak" placeholder="Maret 2026"></label>

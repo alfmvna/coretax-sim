@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = "http://127.0.0.1:8140"
+BASE = "http://127.0.0.1:8155"
 
 # E2E butuh DB bersih supaya hasil deterministik: billing/SPT dari run
 # sebelumnya bisa sudah "Lunas" / sudah submit, sehingga beberapa assertion
