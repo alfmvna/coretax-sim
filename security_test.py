@@ -136,7 +136,8 @@ m = re.search(r'name="csrf_token" value="([^"]+)"', body_op)
 csrf_op = m.group(1) if m else ""
 code, loc, sc, txt = post("/spt/buat/simpan", {"jenis": "PPh Orang Pribadi",
                                                "periode": "Januari - Desember 2025",
-                                               "jenis_periode": "SPT Tahunan", "model": "Normal",
+                                               "jenis_periode": "SPT Tahunan",
+                                               "model": "Pembetulan" if "<option>Pembetulan</option>" in body_op else "Normal",
                                                "csrf_token": csrf_op}, cookie=C_OP)
 check("OP buat SPT", code == 303, f"code={code}")
 

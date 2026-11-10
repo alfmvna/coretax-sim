@@ -73,7 +73,8 @@ body = get("/spt/buat/jenis?jenis=PPh+Orang+Pribadi&periode=Januari+-+Desember+2
 tok = csrf_from(body)
 code, loc, _, _ = post("/spt/buat/simpan", {"jenis": "PPh Orang Pribadi",
                                            "periode": "Januari - Desember 2025",
-                                           "jenis_periode": "SPT Tahunan", "model": "Normal",
+                                           "jenis_periode": "SPT Tahunan",
+                                           "model": "Pembetulan" if "<option>Pembetulan</option>" in body else "Normal",
                                            "csrf_token": tok}, OP)
 check("OP buat SPT", code == 303, f"code={code}")
 

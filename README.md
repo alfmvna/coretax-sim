@@ -16,8 +16,22 @@ Dokumentasi lain:
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) — deploy Docker, TLS, backup, troubleshooting
 - [`docs/KEAMANAN.md`](docs/KEAMANAN.md) — threat model, kontrol, known gaps
 - [`docs/API.md`](docs/API.md) — referensi endpoint
+- [`docs/PEMETAAN-CORETAX-LIVE.md`](docs/PEMETAAN-CORETAX-LIVE.md) — hasil pemetaan UI/alur portal Coretax asli
 
 ---
+
+## Instalasi
+
+Prasyarat: Docker + Docker Compose **atau** Python 3.10+. Tidak ada layanan
+eksternal yang dibutuhkan (database SQLite lokal).
+
+```bash
+git clone https://github.com/alfmvna/coretax-sim.git
+cd coretax-sim
+```
+
+Pilih satu cara di bawah, lalu buka `http://<ip-server>:<port>` dan login dengan
+[akun demo](#akun-demo). Cek sehat: `curl http://127.0.0.1:<port>/healthz`.
 
 ## Menjalankan
 
@@ -33,10 +47,35 @@ Buka `http://<ip-server>:8140`.
 ### Manual
 
 ```bash
-cd ~/projects/coretax-sim
+python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
+python3 -c "import models; models.init_db()"   # buat skema DB (sekali)
 python3 -m uvicorn app:app --host 0.0.0.0 --port 8140
 ```
+
+### Service systemd (tanpa Docker, hidup lagi setelah reboot)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/coretax-sim.service ~/.config/systemd/user/
+# sesuaikan WorkingDirectory/ExecStart (path repo, port) bila perlu
+loginctl enable-linger "$USER"               # tetap jalan setelah logout/reboot
+systemctl --user daemon-reload
+systemctl --user enable --now coretax-sim.service
+```
+
+### Akses dari LAN
+
+1. Bind ke `0.0.0.0` (default di contoh di atas).
+2. Buka firewall hanya untuk subnet LAN, contoh ufw:
+   ```bash
+   sudo ufw allow from 10.18.3.0/24 to any port 8140 proto tcp
+   ```
+3. Uji dari **perangkat lain** di jaringan yang sama (uji dari server sendiri
+   tidak melewati firewall).
+
+> Simulator tidak punya TLS. Untuk akses di luar LAN, pasang reverse proxy
+> (lihat [`docs/DEPLOY.md`](docs/DEPLOY.md) §3).
 
 ### Akun demo
 
@@ -146,9 +185,14 @@ Sudah diperkeras dan diuji — rincian di [`docs/KEAMANAN.md`](docs/KEAMANAN.md)
 
 ## Pengujian
 
+> **Awas:** `e2e_test.py` memanggil `reset_db.py` dan **menghapus isi
+> `data/coretax.db`**. Jalankan server uji di port 8155 dengan `data/` terpisah
+> (jangan di instance yang datanya dipakai). `tools/verify_idor.py` dan
+> `tools/verify_list_scope.py` menunjuk ke port 8140 (ubah `BASE` bila perlu).
+
 ```bash
 python3 test_tax.py         # 50 kasus engine perhitungan
-python3 e2e_test.py         # alur HTTP end-to-end (butuh server jalan)
+python3 e2e_test.py         # alur HTTP end-to-end (butuh server jalan di :8155)
 python3 nav_test.py         # navigasi antar modul
 python3 security_test.py    # keamanan: brute force, CSRF, IDOR, session
 python3 tools/verify_idor.py      # IDOR + CSRF pada write path

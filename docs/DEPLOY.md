@@ -89,6 +89,23 @@ Password awal semua: `demo123`
 > c.commit(); print('ok')"
 > ```
 
+### 2.4b Tanpa Docker: systemd user service + LAN
+
+Unit contoh ada di `deploy/coretax-sim.service` (tanpa `User=`/`Group=`, target
+`default.target`, karena ini unit `--user`).
+
+```bash
+cp deploy/coretax-sim.service ~/.config/systemd/user/
+loginctl enable-linger "$USER"
+systemctl --user daemon-reload && systemctl --user enable --now coretax-sim.service
+ss -ltnp | grep 8140     # harus 0.0.0.0:8140 bila ingin dari LAN
+sudo ufw allow from <SUBNET_LAN>/24 to any port 8140 proto tcp
+```
+
+Verifikasi dari perangkat lain, bukan hanya dari server. Dua instance di mesin
+yang sama (mis. produksi + uji) harus memakai `CORETAX_DATA_DIR` berbeda,
+karena `e2e_test.py` mereset DB default.
+
 ### 2.5 Restart / update
 
 ```bash

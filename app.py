@@ -547,19 +547,23 @@ def spt_dashboard(request: Request, status: str = Query("Konsep SPT"),
         <td>{esc(r["status_tabel"])}</td>
         <td>{esc(r["tgl_dibuat"] or "")}</td>
         <td><a class="btn-mini" href="/spt/{r['id']}">Lihat</a>
-            <a class="btn-mini ghost" href="/spt/{r['id']}/edit">Ubah</a></td></tr>"""
+            <a class="btn-mini ghost" href="/spt/{r['id']}/edit">Ubah</a>
+            {(f'<form method="post" action="/spt/{r["id"]}/hapus" style="display:inline" onsubmit="return confirm(\'Hapus konsep SPT ini?\')">{csrf_field(request)}<button class="btn-mini ghost">Hapus</button></form>' if r["status_tabel"] == "Konsep SPT" else (f'<a class="btn-mini ghost" href="/spt/{r["id"]}/bpe">BPE</a>' if r["status_tabel"] == "SPT Dilaporkan" else ""))}</td></tr>"""
     if not baris:
         baris = '<tr><td colspan="10" class="empty">Tidak ada data yang ditemukan.</td></tr>'
 
     filter_status = "".join(opt(s, s) for s in STATUS_FILTER)
     filter_jenis = '<option value="">Semua Jenis Pajak</option>' + "".join(
         opt(j["kode"], j["kode"]) for j in M.JENIS_PAJAK)
+    tabs = "".join(f'<a class="tab{" active" if t == status else ""}" href="/spt?status={esc(t)}">{esc(t)}</a>'
+                   for t in STATUS_FILTER[1:])
     isi = f"""
     <div class="page-head">
       <div><h1>Surat Pemberitahuan (SPT)</h1>
       <p class="muted">Sampaikan SPT Anda</p></div>
       <a class="btn-primary" href="/spt/buat">Buat Konsep SPT</a>
     </div>
+    <div class="tabs">{tabs}</div>
     <div class="card">
       <form class="filters" method="get">
         <label>Jenis Pajak <select name="jenis">{filter_jenis}</select></label>
@@ -617,12 +621,14 @@ def spt_buat_periode(request: Request, jenis: str = Query(...)):
     tahun = ["2025", "2024", "2023"]
     if jenis in ("PPh Orang Pribadi", "PPh Final Pengungkapan Harta Bersih"):
         periode = "".join(f'<option value="Januari - Desember {t}">Januari - Desember {t}</option>' for t in tahun)
-        jenis_periode = '<option>SPT Tahunan</option>'
+        jenis_periode = ['SPT Tahunan', 'SPT Bagian Tahun Pajak']
     else:
         bulan = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus",
                  "September", "Oktober", "November", "Desember"]
         periode = "".join(f'<option value="{b} {t}">{b} {t}</option>' for b in bulan for t in ["2025"])
-        jenis_periode = '<option>SPT Masa</option>'
+        jenis_periode = ['SPT Masa']
+    radio = "".join(f'<label class="radio"><input type="radio" name="jenis_periode" value="{x}" '
+                    f'{"checked" if i == 0 else ""}> {x}</label>' for i, x in enumerate(jenis_periode))
     isi = f"""
     <div class="page-head"><div><h1>Buat Konsep SPT</h1>
       <p class="muted">Langkah 2 — Pilih periode pelaporan SPT</p></div></div>
@@ -635,12 +641,11 @@ def spt_buat_periode(request: Request, jenis: str = Query(...)):
       <h2>Langkah 2. Pilih periode pelaporan SPT</h2>
       <dl class="kv">
         <dt>Jenis Surat Pemberitahuan Pajak</dt><dd>{esc(j["spt"])}</dd>
-        <dt>Jenis Periode SPT</dt><dd>{jenis_periode}</dd>
-      </dl>
+        </dl>
       <form method="get" action="/spt/buat/jenis" class="stack">
         <input type="hidden" name="jenis" value="{esc(jenis)}">
         <label>Periode dan Tahun Pajak <select name="periode" required>{periode}</select></label>
-        <label>Jenis Periode SPT <select name="jenis_periode">{jenis_periode}</select></label>
+        <div class="stack"><b>Jenis Periode SPT*</b>{radio}</div>
         <div class="row-btns">
           <a class="btn ghost" href="/spt/buat">Kembali</a>
           <button class="btn-primary" type="submit">Lanjut</button>
@@ -666,6 +671,12 @@ def spt_buat_jenis(request: Request, jenis: str = Query(...), periode: str = Que
         "PPh Unifikasi": ["Normal", "Pembetulan"],
         "PPN": ["Normal", "Pembetulan"],
     }.get(jenis, ["Normal"])
+    c = M.conn()
+    ada_normal = c.execute("SELECT 1 FROM spt WHERE npwp=? AND jenis_pajak=? AND masa_pajak=? "
+                           "AND status_spt='Normal' AND status_tabel IN ('SPT Dilaporkan','SPT Menunggu Pembayaran')",
+                           (current_npwp(request), jenis, periode)).fetchone()
+    c.close()
+    model_ops = ["Pembetulan"] if ada_normal else ["Normal"]
     isi = f"""
     <div class="page-head"><div><h1>Buat Konsep SPT</h1>
       <p class="muted">Langkah 3 — Pilih Jenis SPT</p></div></div>
@@ -690,7 +701,7 @@ def spt_buat_jenis(request: Request, jenis: str = Query(...), periode: str = Que
           <select name="model">{''.join(f'<option>{m}</option>' for m in model_ops)}</select></label>
         <div class="row-btns">
           <a class="btn ghost" href="/spt/buat/periode?jenis={esc(jenis)}">Kembali</a>
-          <button class="btn-primary" type="submit">Simpan</button>
+          <button class="btn-primary" type="submit">Buat Konsep SPT</button>
         </div>
       </form>
     </div>
@@ -710,10 +721,17 @@ async def spt_buat_simpan(request: Request, jenis: str = Form(...), periode: str
 
     npwp = current_npwp(request)
     j = next((x for x in M.JENIS_PAJAK if x["kode"] == jenis), None)
+    c0 = M.conn()
+    ada = c0.execute("SELECT 1 FROM spt WHERE npwp=? AND jenis_pajak=? AND masa_pajak=? "
+                     "AND status_spt='Normal' AND status_tabel IN ('SPT Dilaporkan','SPT Menunggu Pembayaran')",
+                     (npwp, jenis, periode)).fetchone()
+    c0.close()
+    if model != ("Pembetulan" if ada else "Normal"):
+        return HTMLResponse("<h1>400</h1><p>Model SPT tidak valid untuk periode ini.</p>", status_code=400)
     tahun = periode.split()[-1]
     masa = periode if jenis_periode == "SPT Tahunan" else periode
     # jatuh tempo
-    if jenis_periode == "SPT Tahunan":
+    if jenis_periode != "SPT Masa":
         jtt = f"{int(tahun)+1}-04-30"
     else:
         bln = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus",
@@ -934,6 +952,56 @@ def spt_detail(request: Request, spt_id: int):
     {isi_bagian}
     """
     return shell(request, "SPT", "Surat Pemberitahuan (SPT)", isi, "Surat Pemberitahuan (SPT)")
+
+
+@app.post("/spt/{spt_id}/hapus")
+async def spt_hapus(request: Request, spt_id: int):
+    if not current_npwp(request):
+        return RedirectResponse("/")
+    form = await request.form()
+    if not check_csrf(request, form):
+        return HTMLResponse("<h1>403</h1><p>Token CSRF tidak valid atau kedaluwarsa.</p>", status_code=403)
+    s = spt_row(spt_id, request)
+    if not s:
+        return HTMLResponse("<h1>404</h1>", status_code=404)
+    if s["status_tabel"] != "Konsep SPT":  # manual DJP: hanya konsep yang dapat dihapus
+        return HTMLResponse("<h1>400</h1><p>Hanya Konsep SPT yang dapat dihapus.</p>", status_code=400)
+    c = M.conn()
+    c.execute("DELETE FROM lampiran WHERE spt_id=?", (spt_id,))
+    c.execute("DELETE FROM spt WHERE id=?", (spt_id,))
+    M.log(actor(request), "hapus_konsep_spt", f"spt_id={spt_id}", db=c)
+    c.commit()
+    c.close()
+    return RedirectResponse("/spt", status_code=303)
+
+
+@app.get("/spt/{spt_id}/bpe", response_class=HTMLResponse)
+def spt_bpe(request: Request, spt_id: int):
+    if not current_npwp(request):
+        return RedirectResponse("/")
+    s = spt_row(spt_id, request)
+    if not s:
+        return HTMLResponse("<h1>404</h1>", status_code=404)
+    if s["status_tabel"] != "SPT Dilaporkan":
+        return HTMLResponse("<h1>400</h1><p>BPE hanya tersedia untuk SPT yang sudah dilaporkan.</p>",
+                            status_code=400)
+    wp = get_wp(request)
+    isi = f"""
+    <div class="card" style="max-width:720px;margin:auto">
+      <p class="muted">KEMENTERIAN KEUANGAN REPUBLIK INDONESIA · DIREKTORAT JENDERAL PAJAK</p>
+      <h2>BPE-{int(spt_id):05d}/KPP/{esc((s["tgl_disampaikan"] or "")[:4])}</h2>
+      <dl class="kv">
+        <dt>NPWP</dt><dd>{esc(s["npwp"])}</dd>
+        <dt>Nama Wajib Pajak</dt><dd>{esc(wp["nama"])}</dd>
+        <dt>Jenis SPT</dt><dd>{esc(s["jenis_spt"])}</dd>
+        <dt>Masa Pajak</dt><dd>{esc(s["masa_pajak"])}</dd>
+        <dt>Status SPT</dt><dd>{esc(s["status_spt"])}</dd>
+        <dt>Tanggal Terima SPT</dt><dd>{esc(s["tgl_disampaikan"])}</dd>
+        <dt>Saluran</dt><dd>{esc(s["kanal"])}</dd>
+      </dl>
+      <div class="row-btns"><a class="btn ghost" href="/spt/{spt_id}">Kembali</a></div>
+    </div>"""
+    return shell(request, "SPT", "Surat Pemberitahuan (SPT)", isi, "Bukti Penerimaan Elektronik")
 
 
 @app.get("/spt/{spt_id}/edit", response_class=HTMLResponse)

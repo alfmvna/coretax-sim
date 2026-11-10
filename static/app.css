@@ -166,3 +166,8 @@ label.check input,label.radio input{width:auto;margin:0}
   .sidebar{position:static}
   .kv{grid-template-columns:1fr}
 }
+
+.tabs{display:flex;gap:1.2rem;border-bottom:1px solid var(--line);margin-bottom:1rem}
+.tab{padding:.5rem 0;color:var(--mute)}
+.tab.active{color:var(--acc);border-bottom:2px solid var(--acc);font-weight:600}
+.radio{display:block;margin:.3rem 0}

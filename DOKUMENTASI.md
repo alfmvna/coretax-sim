@@ -187,6 +187,16 @@ Buat Konsep SPT
 > status PKP). SPN PPN tetap disediakan di sini supaya tim bisa latihan SPT
 > Masa PPN.
 
+**Perilaku sesuai Buku Manual DJP / portal asli**
+
+- Wizard langkah 2 memakai radio *Jenis Periode SPT* (Tahunan / Bagian Tahun
+  Pajak); langkah 3 tombol *Buat Konsep SPT*.
+- Model SPT difilter: sudah ada Normal dilaporkan → hanya *Pembetulan*.
+- Daftar SPT punya tab status; konsep dapat **dihapus** (`POST /spt/{id}/hapus`),
+  SPT dilaporkan tidak.
+- SPT dilaporkan punya **BPE** (`/spt/{id}/bpe`).
+- Pemetaan alur portal asli: [`docs/PEMETAAN-CORETAX-LIVE.md`](docs/PEMETAAN-CORETAX-LIVE.md).
+
 **Status SPT** (mengikuti portal): Konsep SPT → SPT Menunggu Pembayaran →
 SPT Dilaporkan. Plus Ditolak & Dibatalkan sebagai tempat status sisa.
 

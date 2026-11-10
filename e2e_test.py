@@ -168,7 +168,7 @@ code, body = get("/spt/buat/periode?jenis=PPh%20Orang%20Pribadi")
 check("wizard langkah 2 (periode)", code == 200 and "Januari - Desember 2025" in body)
 
 code, body = get("/spt/buat/jenis?jenis=PPh%20Orang%20Pribadi&periode=Januari%20-%20Desember%202025&jenis_periode=SPT%20Tahunan")
-check("wizard langkah 3 (model)", code == 200 and "Normal" in body and "Pembetulan" in body)
+check("wizard langkah 3 (model)", code == 200 and ("<option>Normal</option>" in body) != ("<option>Pembetulan</option>" in body))
 
 # buat konsep -> redirect ke /spt/{id}/edit
 code, body = post("/spt/buat/simpan", {
@@ -276,6 +276,42 @@ code, body = get(f"/billing/{bid}/bayar?csrf_token={csrf_bayar}")
 check("billing lunas", code == 200 and "Lunas" in body)
 code, body = get("/spt?status=Semua")
 check("SPT jadi Dilaporkan", "SPT Dilaporkan" in body)
+
+# ------------------------------------------- 9b. BPE, filter model, hapus konsep
+code, body = get("/spt?status=Semua")
+m = re.search(r'href="/spt/(\d+)/bpe"', body)
+check("tombol BPE ada untuk SPT Dilaporkan", m is not None)
+if m:
+    code, body = get(f"/spt/{m.group(1)}/bpe")
+    check("halaman BPE tampil", code == 200 and "BPE-" in body and "Tanggal Terima SPT" in body)
+    OP_DILAPORKAN = m.group(1)
+else:
+    OP_DILAPORKAN = spt_id
+
+URL_L3 = ("/spt/buat/jenis?jenis=PPh+Orang+Pribadi&periode=Januari+-+Desember+2025"
+          "&jenis_periode=SPT+Tahunan")
+code, body = get(URL_L3)
+check("model SPT: sudah ada Normal -> hanya Pembetulan",
+      "<option>Pembetulan</option>" in body and "<option>Normal</option>" not in body)
+code, _ = post("/spt/buat/simpan", {"jenis": "PPh Orang Pribadi", "periode": "Januari - Desember 2025",
+                                   "jenis_periode": "SPT Tahunan", "model": "Normal"})
+check("model Normal ditolak server bila sudah ada Normal", code == 400, f"code={code}")
+code, body = post("/spt/buat/simpan", {"jenis": "PPh Orang Pribadi", "periode": "Januari - Desember 2025",
+                                      "jenis_periode": "SPT Tahunan", "model": "Pembetulan"})
+check("konsep Pembetulan dibuat", code == 200)
+ids_hapus = re.findall(r'/spt/(\d+)/hapus', get("/spt?status=Semua")[1])
+check("konsep Pembetulan punya tombol hapus", len(ids_hapus) >= 1)
+tok = re.search(r'name="csrf_token" value="([^"]+)"', get("/spt?status=Semua")[1])
+tok = tok.group(1) if tok else ""
+code, _ = post(f"/spt/{OP_DILAPORKAN}/hapus", {"csrf_token": tok})
+check("SPT Dilaporkan tidak bisa dihapus", code == 400, f"code={code}")
+if ids_hapus:
+    code, _ = post(f"/spt/{ids_hapus[0]}/hapus", {"csrf_token": "salah"})
+    check("hapus konsep tanpa CSRF valid -> 403", code == 403, f"code={code}")
+    code, body = post(f"/spt/{ids_hapus[0]}/hapus", {"csrf_token": tok})
+    check("konsep Pembetulan terhapus", code == 200 and f"/spt/{ids_hapus[0]}/edit" not in body)
+    check("SPT Dilaporkan tetap ada setelah hapus konsep",
+          f"/spt/{OP_DILAPORKAN}/bpe" in get("/spt?status=Semua")[1])
 
 # ------------------------------------------- 10. SPT PPh 21/26 (masa)
 code, body = post("/spt/buat/simpan", {

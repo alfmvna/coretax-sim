@@ -110,7 +110,9 @@ Pilih periode pelaporan + jenis periode (Tahunan / Masa).
 
 ### `GET /spt/buat/jenis?jenis=...&periode=...&jenis_periode=...` — Langkah 3
 
-Pilih model SPT (`Normal` / `Pembetulan`).
+Pilih model SPT. Hanya satu opsi yang ditawarkan, mengikuti Buku Manual DJP:
+`Pembetulan` bila SPT Normal periode itu sudah *Dilaporkan* / *Menunggu
+Pembayaran*, selain itu `Normal`.
 
 ### `POST /spt/buat/simpan`
 
@@ -122,7 +124,19 @@ Pilih model SPT (`Normal` / `Pembetulan`).
 | `model` | string | `Normal` / `Pembetulan` |
 | `csrf_token` | string | Wajib |
 
+Server menolak (`400`) model yang tidak sesuai aturan di atas.
+
 → `303` ke `/spt/{id}/edit`.
+
+### `POST /spt/{id}/hapus` — Hapus konsep
+
+Hanya status `Konsep SPT` (manual DJP: konsep boleh dihapus bila ada
+kesalahan). SPT lain → `400`. Wajib `csrf_token`; hanya pemilik SPT (atau OP).
+Lampiran ikut terhapus. → `303` ke `/spt`.
+
+### `GET /spt/{id}/bpe` — Bukti Penerimaan Elektronik
+
+Hanya untuk status `SPT Dilaporkan` (selain itu `400`).
 
 ### `GET /spt/{id}` — Ringkasan hasil penghitungan
 
